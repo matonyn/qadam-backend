@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from app import models, schemas
-from app.dependencies import get_db, get_current_user
 import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from supabase import Client
+
+from app import models, schemas
+from app.dependencies import get_current_user, get_supabase
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
 
 
 def _review_out(r: models.Review) -> schemas.ReviewOut:
     created = r.created_at.isoformat() + "Z" if r.created_at else ""
-    # Build display name from user
     user_name = f"{r.user.first_name} {r.user.last_name[0]}." if r.user else "Unknown"
     return schemas.ReviewOut(
         id=r.id,
@@ -39,78 +40,101 @@ def _calc_sentiment(rating: int) -> str:
 def get_reviews(
     targetId: str | None = Query(None),
     targetType: str | None = Query(None),
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Review)
+    q = sb.table("reviews").select("*")
     if targetId:
-        q = q.filter(models.Review.target_id == targetId)
+        q = q.eq("target_id", targetId)
     if targetType:
-        q = q.filter(models.Review.target_type == targetType)
-    reviews = q.order_by(models.Review.created_at.desc()).all()
-    return schemas.ApiResponse(success=True, data=[_review_out(r) for r in reviews])
+        q = q.eq("target_type", targetType)
+    res = q.order("created_at", desc=True).execute()
+    revs = [models.Review.from_row(r) for r in (res.data or [])]
+    uids = list({r.user_id for r in revs})
+    users: dict[str, models.User] = {}
+    if uids:
+        ures = sb.table("users").select("*").in_("id", uids).execute()
+        for row in ures.data or []:
+            users[row["id"]] = models.User.from_row(row)
+    for r in revs:
+        r.user = users.get(r.user_id)
+    return schemas.ApiResponse(success=True, data=[_review_out(r) for r in revs])
 
 
 @router.post("", response_model=schemas.ApiResponse[schemas.ReviewOut])
 def create_review(
     body: schemas.CreateReviewRequest,
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
     if not 1 <= body.rating <= 5:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rating must be between 1 and 5")
 
-    review = models.Review(
-        id=str(uuid.uuid4()),
-        user_id=current_user.id,
-        target_id=body.targetId,
-        target_type=body.targetType,
-        target_name=body.targetName,
-        rating=body.rating,
-        comment=body.comment,
-        sentiment=_calc_sentiment(body.rating),
-        helpful=0,
-    )
-    db.add(review)
-    db.commit()
-    db.refresh(review)
-    return schemas.ApiResponse(success=True, data=_review_out(review))
+    row = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.id,
+        "target_id": body.targetId,
+        "target_type": body.targetType,
+        "target_name": body.targetName,
+        "rating": body.rating,
+        "comment": body.comment,
+        "sentiment": _calc_sentiment(body.rating),
+        "helpful": 0,
+    }
+    ins = sb.table("reviews").insert(row).execute()
+    rev = models.Review.from_row((ins.data or [row])[0])
+    rev.user = current_user
+    return schemas.ApiResponse(success=True, data=_review_out(rev))
 
 
 @router.post("/{review_id}/helpful", response_model=schemas.ApiResponse[schemas.HelpfulResult])
 def mark_helpful(
     review_id: str,
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    review = db.query(models.Review).filter(models.Review.id == review_id).first()
-    if not review:
+    rres = sb.table("reviews").select("*").eq("id", review_id).limit(1).execute()
+    rows = rres.data or []
+    if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    review = models.Review.from_row(rows[0])
 
-    already = db.query(models.ReviewHelpful).filter(
-        models.ReviewHelpful.review_id == review_id,
-        models.ReviewHelpful.user_id == current_user.id,
-    ).first()
-    if already:
+    ex = (
+        sb.table("review_helpful")
+        .select("id")
+        .eq("review_id", review_id)
+        .eq("user_id", current_user.id)
+        .limit(1)
+        .execute()
+    )
+    if ex.data:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already marked helpful")
 
-    db.add(models.ReviewHelpful(review_id=review_id, user_id=current_user.id))
-    review.helpful += 1
-    db.commit()
-    return schemas.ApiResponse(success=True, data=schemas.HelpfulResult(helpful=review.helpful))
+    sb.table("review_helpful").insert(
+        {"id": str(uuid.uuid4()), "review_id": review_id, "user_id": current_user.id}
+    ).execute()
+    new_helpful = review.helpful + 1
+    sb.table("reviews").update({"helpful": new_helpful}).eq("id", review_id).execute()
+    return schemas.ApiResponse(success=True, data=schemas.HelpfulResult(helpful=new_helpful))
 
 
 @router.post("/{review_id}/report", response_model=schemas.ApiResponse[None])
 def report_review(
     review_id: str,
     body: schemas.ReportReviewRequest,
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    review = db.query(models.Review).filter(models.Review.id == review_id).first()
-    if not review:
+    rres = sb.table("reviews").select("id").eq("id", review_id).limit(1).execute()
+    if not rres.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
-    db.add(models.ReviewReport(review_id=review_id, user_id=current_user.id, reason=body.reason))
-    db.commit()
+    sb.table("review_reports").insert(
+        {
+            "id": str(uuid.uuid4()),
+            "review_id": review_id,
+            "user_id": current_user.id,
+            "reason": body.reason,
+        }
+    ).execute()
     return schemas.ApiResponse(success=True, data=None)

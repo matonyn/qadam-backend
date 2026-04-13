@@ -1,0 +1,46 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.7.1
+
+# Scraping
+selenium==4.21.0
+webdriver-manager==4.0.1
+beautifulsoup4==4.12.3
+requests==2.32.2
+fake-useragent==1.5.1
+
+# NLP / Sentiment
+transformers==4.41.2
+torch==2.3.0
+datasets==2.19.2
+scikit-learn==1.5.0
+nltk==3.8.1
+pymorphy3==2.0.2        # Russian morphology
+langdetect==1.0.9
+
+# Recommendation
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+implicit==0.7.2         # ALS collaborative filtering
+
+# Time-series / Crowd prediction
+statsmodels==0.14.2
+lightgbm==4.3.0
+prophet==1.1.5
+
+# Analytics / Visualization (dashboard)
+plotly==5.22.0
+dash==2.17.0
+dash-bootstrap-components==1.6.0
+
+# Data persistence
+sqlalchemy==2.0.30
+aiosqlite==0.20.0
+
+# Utilities
+python-dotenv==1.0.1
+httpx==0.27.0
+apscheduler==3.10.4
+loguru==0.7.2

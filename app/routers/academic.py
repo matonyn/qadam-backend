@@ -1,8 +1,11 @@
 from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from supabase import Client
+
 from app import models, schemas
-from app.dependencies import get_db, get_current_user
+from app.dependencies import get_current_user, get_supabase
+from app.seed import ensure_academic_plan
 
 router = APIRouter(prefix="/academic", tags=["academic"])
 
@@ -27,24 +30,23 @@ def _course_out(c: models.Course) -> schemas.CourseOut:
 @router.get("/courses", response_model=schemas.ApiResponse[list[schemas.CourseOut]])
 def get_courses(
     semester: str | None = Query(None),
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Course).filter(models.Course.user_id == current_user.id)
+    q = sb.table("courses").select("*").eq("user_id", current_user.id)
     if semester:
-        q = q.filter(models.Course.semester == semester)
-    courses = q.all()
+        q = q.eq("semester", semester)
+    res = q.execute()
+    courses = [models.Course.from_row(r) for r in (res.data or [])]
     return schemas.ApiResponse(success=True, data=[_course_out(c) for c in courses])
 
 
 @router.get("/plan", response_model=schemas.ApiResponse[schemas.AcademicPlanOut])
 def get_academic_plan(
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    plan = db.query(models.AcademicPlan).filter(models.AcademicPlan.user_id == current_user.id).first()
-    if not plan:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Academic plan not found")
+    plan = ensure_academic_plan(sb, current_user.id)
 
     return schemas.ApiResponse(
         success=True,
@@ -64,10 +66,11 @@ def get_academic_plan(
 @router.get("/schedule", response_model=schemas.ApiResponse[list[schemas.CourseOut]])
 def get_schedule(
     date_param: str | None = Query(None, alias="date"),
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    courses = db.query(models.Course).filter(models.Course.user_id == current_user.id).all()
+    res = sb.table("courses").select("*").eq("user_id", current_user.id).execute()
+    courses = [models.Course.from_row(r) for r in (res.data or [])]
 
     if date_param:
         try:

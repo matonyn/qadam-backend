@@ -1,7 +1,10 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from supabase import Client
+
 from app import models, schemas
-from app.dependencies import get_db, get_current_user
+from app.dependencies import get_current_user, get_supabase
 
 router = APIRouter(prefix="/discounts", tags=["discounts"])
 
@@ -25,40 +28,58 @@ def _discount_out(d: models.Discount) -> schemas.DiscountOut:
 @router.get("", response_model=schemas.ApiResponse[list[schemas.DiscountOut]])
 def get_discounts(
     category: str | None = Query(None),
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Discount)
+    q = sb.table("discounts").select("*")
     if category:
-        q = q.filter(models.Discount.category == category)
-    discounts = q.all()
+        q = q.eq("category", category)
+    res = q.execute()
+    discounts = [models.Discount.from_row(r) for r in (res.data or [])]
     return schemas.ApiResponse(success=True, data=[_discount_out(d) for d in discounts])
 
 
 @router.get("/{discount_id}", response_model=schemas.ApiResponse[schemas.DiscountOut])
 def get_discount(
     discount_id: str,
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     _: models.User = Depends(get_current_user),
 ):
-    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
-    if not d:
+    res = sb.table("discounts").select("*").eq("id", discount_id).limit(1).execute()
+    rows = res.data or []
+    if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    return schemas.ApiResponse(success=True, data=_discount_out(d))
+    return schemas.ApiResponse(success=True, data=_discount_out(models.Discount.from_row(rows[0])))
 
 
 @router.post("/{discount_id}/verify", response_model=schemas.ApiResponse[schemas.EligibilityResult])
 def verify_eligibility(
     discount_id: str,
     body: schemas.VerifyEligibilityRequest,
-    db: Session = Depends(get_db),
+    sb: Client = Depends(get_supabase),
     current_user: models.User = Depends(get_current_user),
 ):
-    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
-    if not d:
+    res = sb.table("discounts").select("*").eq("id", discount_id).limit(1).execute()
+    rows = res.data or []
+    if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    d = models.Discount.from_row(rows[0])
 
-    # Verify that the student ID matches the authenticated user
-    eligible = current_user.student_id == body.studentId
-    reason = None if eligible else "Student ID does not match your account"
-    return schemas.ApiResponse(success=True, data=schemas.EligibilityResult(eligible=eligible, reason=reason))
+    try:
+        valid_until = date.fromisoformat(d.valid_until) if d.valid_until else date.min
+    except (TypeError, ValueError):
+        valid_until = date.min
+
+    if valid_until < date.today():
+        return schemas.ApiResponse(
+            success=True,
+            data=schemas.EligibilityResult(eligible=False, reason="Discount is no longer valid"),
+        )
+
+    if current_user.student_id != body.studentId:
+        return schemas.ApiResponse(
+            success=True,
+            data=schemas.EligibilityResult(eligible=False, reason="Student ID does not match your account"),
+        )
+
+    return schemas.ApiResponse(success=True, data=schemas.EligibilityResult(eligible=True, reason=None))

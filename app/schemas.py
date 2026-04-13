@@ -1,4 +1,4 @@
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Literal, Optional, TypeVar
 from pydantic import BaseModel, EmailStr
 
 T = TypeVar("T")
@@ -65,6 +65,11 @@ class AuthResponse(BaseModel):
     user: UserOut
 
 
+class RefreshTokenResponse(BaseModel):
+    accessToken: str
+    expiresIn: int
+
+
 # ── Maps ─────────────────────────────────────────────────────────────────────
 
 class BuildingOut(BaseModel):
@@ -79,9 +84,19 @@ class BuildingOut(BaseModel):
     hasRamp: bool
     category: str
     imageUrl: Optional[str] = None
+    twogisId: Optional[str] = None
+    dataSource: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class Sync2gisBuildingsResult(BaseModel):
+    """Result of importing 2GIS catalog branches/buildings into `buildings`."""
+
+    upserted: int
+    fetchedUnique: int
+    skippedNoCoords: int
 
 
 class RoomOut(BaseModel):
@@ -142,7 +157,9 @@ class CalculateRouteRequest(BaseModel):
     startLng: float
     endLat: float
     endLng: float
-    preference: str = "shortest"
+    startBuildingId: Optional[str] = None
+    endBuildingId: Optional[str] = None
+    preference: Literal["shortest", "accessible", "least_crowded"] = "shortest"
 
 
 class SaveRouteRequest(BaseModel):
@@ -179,6 +196,16 @@ class EventRegistrationOut(BaseModel):
     registrationId: str
     eventId: str
     userId: str
+    registeredAt: str
+
+
+class EventRegistrationStatusOut(BaseModel):
+    isRegistered: bool
+    registration: Optional[EventRegistrationOut] = None
+
+
+# Returned by /events/registered (registration + event info).
+class RegisteredCampusEventOut(CampusEventOut):
     registeredAt: str
 
 
@@ -311,7 +338,7 @@ class CreatePlannerEventRequest(BaseModel):
     date: str
     startTime: str
     endTime: str
-    type: str
+    type: Literal["class", "study", "meeting", "event", "reminder", "other"]
     location: Optional[str] = None
     buildingId: Optional[str] = None
     color: str = "#3B82F6"
@@ -325,7 +352,7 @@ class UpdatePlannerEventRequest(BaseModel):
     date: Optional[str] = None
     startTime: Optional[str] = None
     endTime: Optional[str] = None
-    type: Optional[str] = None
+    type: Optional[Literal["class", "study", "meeting", "event", "reminder", "other"]] = None
     location: Optional[str] = None
     buildingId: Optional[str] = None
     color: Optional[str] = None

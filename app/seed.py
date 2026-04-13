@@ -1,7 +1,16 @@
-"""Seed the database with mock data on first run."""
-from sqlalchemy.orm import Session
+"""Seed Supabase tables with mock data on first run."""
+
+from __future__ import annotations
+
+import uuid
+from typing import TYPE_CHECKING
+
 from app import models
 
+if TYPE_CHECKING:
+    from supabase import Client
+
+# --- static lists (same as before) -------------------------------------------
 
 BUILDINGS = [
     {"id": "bldg-001", "name": "Block 1 - Sciences", "short_name": "Block 1", "description": "Main science building with laboratories and lecture halls", "latitude": 51.0906, "longitude": 71.3989, "floors": 4, "has_elevator": True, "has_ramp": True, "category": "academic"},
@@ -63,6 +72,14 @@ STUDY_ROOMS = [
     {"id": "study-006", "building_id": "bldg-001", "building_name": "Block 1", "name": "Science Commons", "floor": 1, "capacity": 20, "amenities": ["Wi-Fi", "Power Outlets", "Lab Equipment Access"], "is_available": True, "current_occupancy": 8, "noise_level": "moderate"},
 ]
 
+STUB_USERS = [
+    {"id": "user-002", "first_name": "Amir", "last_name": "K.", "student_id": "stub"},
+    {"id": "user-003", "first_name": "Dana", "last_name": "S.", "student_id": "stub"},
+    {"id": "user-004", "first_name": "Bekzat", "last_name": "T.", "student_id": "stub"},
+    {"id": "user-005", "first_name": "Gulnara", "last_name": "M.", "student_id": "stub"},
+    {"id": "user-006", "first_name": "Marat", "last_name": "A.", "student_id": "stub"},
+]
+
 DEFAULT_COURSES = [
     {"id": "course-001", "code": "CSCI 408", "name": "Senior Project I", "credits": 6, "grade": "A", "grade_points": 4.0, "semester": "Fall 2025", "instructor": "Dr. Askar Boranbayev", "schedule": [{"day": "monday", "startTime": "10:00", "endTime": "11:30", "room": "210", "buildingId": "bldg-002"}, {"day": "wednesday", "startTime": "10:00", "endTime": "11:30", "room": "210", "buildingId": "bldg-002"}]},
     {"id": "course-002", "code": "CSCI 390", "name": "Machine Learning", "credits": 6, "grade": "A-", "grade_points": 3.67, "semester": "Fall 2025", "instructor": "Dr. Elena Kim", "schedule": [{"day": "tuesday", "startTime": "14:00", "endTime": "15:30", "room": "301", "buildingId": "bldg-001"}, {"day": "thursday", "startTime": "14:00", "endTime": "15:30", "room": "301", "buildingId": "bldg-001"}]},
@@ -97,107 +114,101 @@ DEFAULT_NOTIFICATIONS = [
     {"title": "Navigation Update", "message": "Building B entrance is temporarily closed. Alternative routes are available.", "type": "navigation", "read": True, "action": {"screen": "MapTab", "params": {}}},
 ]
 
-# Stub users for review author names (not real accounts)
-STUB_USERS = [
-    {"id": "user-002", "first_name": "Amir", "last_name": "K.", "student_id": "stub"},
-    {"id": "user-003", "first_name": "Dana", "last_name": "S.", "student_id": "stub"},
-    {"id": "user-004", "first_name": "Bekzat", "last_name": "T.", "student_id": "stub"},
-    {"id": "user-005", "first_name": "Gulnara", "last_name": "M.", "student_id": "stub"},
-    {"id": "user-006", "first_name": "Marat", "last_name": "A.", "student_id": "stub"},
-]
 
+def seed_static_data(sb: Client) -> None:
+    existing = sb.table("buildings").select("id").limit(1).execute()
+    if existing.data:
+        return
 
-def seed_static_data(db: Session) -> None:
-    """Seed buildings, rooms, events, discounts, study rooms if not present."""
-    if db.query(models.Building).first():
-        return  # already seeded
+    sb.table("buildings").insert(BUILDINGS).execute()
+    sb.table("rooms").insert(ROOMS).execute()
+    sb.table("campus_events").insert(CAMPUS_EVENTS).execute()
+    sb.table("discounts").insert(DISCOUNTS).execute()
+    sb.table("study_rooms").insert(STUDY_ROOMS).execute()
 
-    for b in BUILDINGS:
-        db.add(models.Building(**b))
-
-    for r in ROOMS:
-        db.add(models.Room(**r))
-
-    for e in CAMPUS_EVENTS:
-        db.add(models.CampusEvent(**e))
-
-    for d in DISCOUNTS:
-        db.add(models.Discount(**d))
-
-    for sr in STUDY_ROOMS:
-        db.add(models.StudyRoom(**sr))
-
-    # Stub users needed so reviews have valid user_ids (FK constraint not enforced on SQLite by default,
-    # but add them for correctness)
     for su in STUB_USERS:
-        exists = db.query(models.User).filter(models.User.id == su["id"]).first()
-        if not exists:
-            db.add(models.User(
-                id=su["id"],
-                email=f"{su['id']}@stub.internal",
-                password_hash="stub",
-                first_name=su["first_name"],
-                last_name=su["last_name"],
-                student_id=su["student_id"],
-            ))
+        sb.table("users").upsert(
+            {
+                "id": su["id"],
+                "email": f"{su['id']}@stub.internal",
+                "password_hash": "stub",
+                "first_name": su["first_name"],
+                "last_name": su["last_name"],
+                "student_id": su["student_id"],
+            },
+            on_conflict="id",
+        ).execute()
 
-    db.flush()
-
-    for rev in REVIEWS:
-        from datetime import datetime, timezone
-        created = datetime.fromisoformat(rev["created_at"].replace("Z", "+00:00"))
-        db.add(models.Review(
-            id=rev["id"],
-            user_id=rev["user_id"],
-            target_id=rev["target_id"],
-            target_type=rev["target_type"],
-            target_name=rev["target_name"],
-            rating=rev["rating"],
-            comment=rev["comment"],
-            sentiment=rev["sentiment"],
-            helpful=rev["helpful"],
-            created_at=created,
-        ))
-
-    db.commit()
+    sb.table("reviews").insert(REVIEWS).execute()
 
 
-def seed_new_user(db: Session, user: models.User) -> None:
-    """Give a new user default courses, academic plan, settings, and notifications."""
-    import uuid
+def ensure_user_settings(sb: Client, user_id: str) -> models.UserSettings:
+    res = sb.table("user_settings").select("*").eq("user_id", user_id).limit(1).execute()
+    rows = res.data or []
+    if rows:
+        return models.UserSettings.from_row(rows[0])
+    row = {
+        "user_id": user_id,
+        "notifications_settings": DEFAULT_SETTINGS["notifications_settings"],
+        "accessibility_settings": DEFAULT_SETTINGS["accessibility_settings"],
+        "privacy_settings": DEFAULT_SETTINGS["privacy_settings"],
+        "language": DEFAULT_SETTINGS["language"],
+        "theme": DEFAULT_SETTINGS["theme"],
+    }
+    ins = sb.table("user_settings").insert(row).execute()
+    return models.UserSettings.from_row((ins.data or [row])[0])
 
+
+def ensure_academic_plan(sb: Client, user_id: str) -> models.AcademicPlan:
+    res = sb.table("academic_plans").select("*").eq("user_id", user_id).limit(1).execute()
+    rows = res.data or []
+    if rows:
+        return models.AcademicPlan.from_row(rows[0])
+    row = {"user_id": user_id, **DEFAULT_ACADEMIC_PLAN}
+    ins = sb.table("academic_plans").insert(row).execute()
+    return models.AcademicPlan.from_row((ins.data or [row])[0])
+
+
+def seed_new_user(sb: Client, user: models.User) -> None:
+    course_rows = []
     for c in DEFAULT_COURSES:
-        db.add(models.Course(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            code=c["code"],
-            name=c["name"],
-            credits=c["credits"],
-            grade=c.get("grade"),
-            grade_points=c.get("grade_points"),
-            semester=c["semester"],
-            instructor=c["instructor"],
-            schedule=c["schedule"],
-        ))
+        course_rows.append(
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user.id,
+                "code": c["code"],
+                "name": c["name"],
+                "credits": c["credits"],
+                "grade": c.get("grade"),
+                "grade_points": c.get("grade_points"),
+                "semester": c["semester"],
+                "instructor": c["instructor"],
+                "schedule": c["schedule"],
+            }
+        )
+    if course_rows:
+        sb.table("courses").insert(course_rows).execute()
 
-    db.add(models.AcademicPlan(
-        user_id=user.id,
-        **DEFAULT_ACADEMIC_PLAN,
-    ))
-
-    db.add(models.UserSettings(
-        user_id=user.id,
-        **DEFAULT_SETTINGS,
-    ))
+    sb.table("academic_plans").insert({"user_id": user.id, **DEFAULT_ACADEMIC_PLAN}).execute()
+    sb.table("user_settings").insert(
+        {
+            "user_id": user.id,
+            "notifications_settings": DEFAULT_SETTINGS["notifications_settings"],
+            "accessibility_settings": DEFAULT_SETTINGS["accessibility_settings"],
+            "privacy_settings": DEFAULT_SETTINGS["privacy_settings"],
+            "language": DEFAULT_SETTINGS["language"],
+            "theme": DEFAULT_SETTINGS["theme"],
+        }
+    ).execute()
 
     for n in DEFAULT_NOTIFICATIONS:
-        db.add(models.Notification(
-            user_id=user.id,
-            title=n["title"],
-            message=n["message"],
-            type=n["type"],
-            read=n["read"],
-            action=n.get("action"),
-        ))
-
-    db.commit()
+        sb.table("notifications").insert(
+            {
+                "user_id": user.id,
+                "title": n["title"],
+                "message": n["message"],
+                "type": n["type"],
+                "read": n["read"],
+                "action": n.get("action"),
+            }
+        ).execute()

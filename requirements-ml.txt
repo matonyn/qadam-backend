@@ -1,0 +1,19 @@
+# Optional: Smart Campus ML (https://github.com/aruryss/senior_project_ML)
+# Install after base deps: pip install -r requirements.txt -r requirements-ml.txt
+#
+# Requires vendor/senior_project_ML (clone into repo root):
+#   git clone https://github.com/aruryss/senior_project_ML.git vendor/senior_project_ML
+
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+scikit-learn==1.5.0
+implicit==0.7.2
+lightgbm==4.3.0
+loguru==0.7.2
+torch==2.3.0
+transformers==4.41.2
+datasets==2.19.2
+nltk==3.8.1
+pymorphy3==2.0.2
+langdetect==1.0.9

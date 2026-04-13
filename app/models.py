@@ -1,319 +1,497 @@
-import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, JSON, UniqueConstraint
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from app.database import Base
-
-
-def gen_uuid():
-    return str(uuid.uuid4())
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    email = Column(String, unique=True, nullable=False, index=True)
-    password_hash = Column(String, nullable=False)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
-    student_id = Column(String, nullable=False)
-    avatar = Column(String, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-
-    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
-    planner_events = relationship("PlannerEvent", back_populates="user", cascade="all, delete-orphan")
-    bookings = relationship("StudyRoomBooking", back_populates="user", cascade="all, delete-orphan")
-    user_settings = relationship("UserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
-    courses = relationship("Course", back_populates="user", cascade="all, delete-orphan")
-    academic_plan = relationship("AcademicPlan", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    reviews = relationship("Review", back_populates="user")
-    event_registrations = relationship("EventRegistration", back_populates="user", cascade="all, delete-orphan")
-    saved_routes = relationship("SavedRoute", back_populates="user", cascade="all, delete-orphan")
-
-
-class RefreshToken(Base):
-    __tablename__ = "refresh_tokens"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    token = Column(String, unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
-    is_revoked = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
-
-    user = relationship("User", back_populates="refresh_tokens")
-
-
-class Building(Base):
-    __tablename__ = "buildings"
-
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    short_name = Column(String, nullable=False)
-    description = Column(String)
-    latitude = Column(Float)
-    longitude = Column(Float)
-    floors = Column(Integer)
-    has_elevator = Column(Boolean, default=False)
-    has_ramp = Column(Boolean, default=False)
-    category = Column(String)
-    image_url = Column(String, nullable=True)
-
-    rooms = relationship("Room", back_populates="building")
-
-
-class Room(Base):
-    __tablename__ = "rooms"
-
-    id = Column(String, primary_key=True)
-    building_id = Column(String, ForeignKey("buildings.id"), nullable=False)
-    name = Column(String, nullable=False)
-    floor = Column(Integer)
-    type = Column(String)
-    capacity = Column(Integer, nullable=True)
-    accessible = Column(Boolean, default=True)
-
-    building = relationship("Building", back_populates="rooms")
-
-
-class CampusEvent(Base):
-    __tablename__ = "campus_events"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    title = Column(String, nullable=False)
-    description = Column(String)
-    location = Column(String)
-    building_id = Column(String, ForeignKey("buildings.id"), nullable=True)
-    start_date = Column(String)
-    end_date = Column(String)
-    category = Column(String)
-    organizer = Column(String)
-    is_registration_required = Column(Boolean, default=False)
-    registration_url = Column(String, nullable=True)
-    image_url = Column(String, nullable=True)
-
-    registrations = relationship("EventRegistration", back_populates="event", cascade="all, delete-orphan")
-
-
-class EventRegistration(Base):
-    __tablename__ = "event_registrations"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    event_id = Column(String, ForeignKey("campus_events.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    registered_at = Column(DateTime, server_default=func.now())
-
-    __table_args__ = (UniqueConstraint("event_id", "user_id", name="uq_event_user"),)
-
-    event = relationship("CampusEvent", back_populates="registrations")
-    user = relationship("User", back_populates="event_registrations")
-
-
-class Discount(Base):
-    __tablename__ = "discounts"
-
-    id = Column(String, primary_key=True)
-    vendor_name = Column(String, nullable=False)
-    vendor_logo = Column(String, nullable=True)
-    title = Column(String, nullable=False)
-    description = Column(String)
-    discount_percentage = Column(Integer, default=0)
-    category = Column(String)
-    valid_until = Column(String)
-    code = Column(String, nullable=True)
-    terms = Column(String)
-    is_verified = Column(Boolean, default=True)
-
-
-class Review(Base):
-    __tablename__ = "reviews"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    target_id = Column(String, nullable=False)
-    target_type = Column(String, nullable=False)
-    target_name = Column(String, nullable=False)
-    rating = Column(Integer, nullable=False)
-    comment = Column(String)
-    sentiment = Column(String)
-    helpful = Column(Integer, default=0)
-    created_at = Column(DateTime, server_default=func.now())
-
-    user = relationship("User", back_populates="reviews")
-    helpful_marks = relationship("ReviewHelpful", back_populates="review", cascade="all, delete-orphan")
-    reports = relationship("ReviewReport", back_populates="review", cascade="all, delete-orphan")
-
-
-class ReviewHelpful(Base):
-    __tablename__ = "review_helpful"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    review_id = Column(String, ForeignKey("reviews.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-
-    __table_args__ = (UniqueConstraint("review_id", "user_id", name="uq_review_user_helpful"),)
-
-    review = relationship("Review", back_populates="helpful_marks")
-
-
-class ReviewReport(Base):
-    __tablename__ = "review_reports"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    review_id = Column(String, ForeignKey("reviews.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    reason = Column(String)
-    created_at = Column(DateTime, server_default=func.now())
-
-    review = relationship("Review", back_populates="reports")
-
-
-class Course(Base):
-    __tablename__ = "courses"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    code = Column(String, nullable=False)
-    name = Column(String, nullable=False)
-    credits = Column(Integer)
-    grade = Column(String, nullable=True)
-    grade_points = Column(Float, nullable=True)
-    semester = Column(String)
-    instructor = Column(String)
-    schedule = Column(JSON)
-
-    user = relationship("User", back_populates="courses")
-
-
-class AcademicPlan(Base):
-    __tablename__ = "academic_plans"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True)
-    total_credits_required = Column(Integer)
-    credits_completed = Column(Integer)
-    credits_in_progress = Column(Integer)
-    gpa = Column(Float)
-    standing = Column(String)
-    expected_graduation = Column(String)
-    major = Column(String)
-    minor = Column(String, nullable=True)
-
-    user = relationship("User", back_populates="academic_plan")
-
-
-class PlannerEvent(Base):
-    __tablename__ = "planner_events"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    title = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    date = Column(String, nullable=False)
-    start_time = Column(String, nullable=False)
-    end_time = Column(String, nullable=False)
-    type = Column(String)
-    location = Column(String, nullable=True)
-    building_id = Column(String, nullable=True)
-    color = Column(String)
-    is_recurring = Column(Boolean, default=False)
-    reminder_minutes = Column(Integer, nullable=True)
-
-    user = relationship("User", back_populates="planner_events")
-
-
-class StudyRoom(Base):
-    __tablename__ = "study_rooms"
-
-    id = Column(String, primary_key=True)
-    building_id = Column(String, ForeignKey("buildings.id"), nullable=False)
-    building_name = Column(String)
-    name = Column(String, nullable=False)
-    floor = Column(Integer)
-    capacity = Column(Integer)
-    amenities = Column(JSON)
-    is_available = Column(Boolean, default=True)
-    current_occupancy = Column(Integer, default=0)
-    noise_level = Column(String)
-    image_url = Column(String, nullable=True)
-
-    bookings = relationship("StudyRoomBooking", back_populates="room", cascade="all, delete-orphan")
-
-
-class StudyRoomBooking(Base):
-    __tablename__ = "study_room_bookings"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    room_id = Column(String, ForeignKey("study_rooms.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    date = Column(String, nullable=False)
-    start_time = Column(String, nullable=False)
-    end_time = Column(String, nullable=False)
-    status = Column(String, default="confirmed")
-    created_at = Column(DateTime, server_default=func.now())
-
-    room = relationship("StudyRoom", back_populates="bookings")
-    user = relationship("User", back_populates="bookings")
-
-
-class UserSettings(Base):
-    __tablename__ = "user_settings"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True)
-    notifications_settings = Column(JSON)
-    accessibility_settings = Column(JSON)
-    privacy_settings = Column(JSON)
-    language = Column(String, default="en")
-    theme = Column(String, default="light")
-
-    user = relationship("User", back_populates="user_settings")
-
-
-class Notification(Base):
-    __tablename__ = "notifications"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    title = Column(String, nullable=False)
-    message = Column(String)
-    type = Column(String)
-    date = Column(DateTime, server_default=func.now())
-    read = Column(Boolean, default=False)
-    action = Column(JSON, nullable=True)
-
-    user = relationship("User", back_populates="notifications")
-
-
-class Route(Base):
-    __tablename__ = "routes"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    start_lat = Column(Float)
-    start_lng = Column(Float)
-    start_name = Column(String)
-    end_lat = Column(Float)
-    end_lng = Column(Float)
-    end_name = Column(String)
-    distance = Column(Integer)
-    duration = Column(Integer)
-    is_accessible = Column(Boolean)
-    crowd_level = Column(String)
-    waypoints = Column(JSON)
-    instructions = Column(JSON)
-    preference = Column(String)
-    created_at = Column(DateTime, server_default=func.now())
-
-
-class SavedRoute(Base):
-    __tablename__ = "saved_routes"
-
-    id = Column(String, primary_key=True, default=gen_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    route_id = Column(String, ForeignKey("routes.id"), nullable=False)
-    saved_at = Column(DateTime, server_default=func.now())
-
-    user = relationship("User", back_populates="saved_routes")
-    route = relationship("Route")
+"""Row types for Supabase/PostgREST responses (snake_case columns)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+
+def parse_dt(v: Any) -> datetime | None:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    s = str(v).replace("Z", "+00:00")
+    d = datetime.fromisoformat(s)
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def fnum(x: Any) -> float | None:
+    if x is None:
+        return None
+    return float(x)
+
+
+@dataclass
+class User:
+    id: str
+    email: str
+    password_hash: str
+    first_name: str
+    last_name: str
+    student_id: str
+    avatar: str | None
+    created_at: datetime | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> User:
+        return cls(
+            id=r["id"],
+            email=r["email"],
+            password_hash=r["password_hash"],
+            first_name=r["first_name"],
+            last_name=r["last_name"],
+            student_id=r["student_id"],
+            avatar=r.get("avatar"),
+            created_at=parse_dt(r.get("created_at")),
+        )
+
+
+@dataclass
+class RefreshToken:
+    id: str
+    user_id: str
+    token: str
+    expires_at: datetime
+    is_revoked: bool
+    created_at: datetime | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> RefreshToken:
+        exp = parse_dt(r["expires_at"])
+        if exp is None:
+            raise ValueError("refresh_tokens.expires_at required")
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            token=r["token"],
+            expires_at=exp,
+            is_revoked=bool(r.get("is_revoked", False)),
+            created_at=parse_dt(r.get("created_at")),
+        )
+
+
+@dataclass
+class Building:
+    id: str
+    name: str
+    short_name: str
+    description: str | None
+    latitude: float | None
+    longitude: float | None
+    floors: int | None
+    has_elevator: bool
+    has_ramp: bool
+    category: str | None
+    image_url: str | None
+    twogis_id: str | None = None
+    data_source: str = "manual"
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Building:
+        return cls(
+            id=r["id"],
+            name=r["name"],
+            short_name=r["short_name"],
+            description=r.get("description"),
+            latitude=fnum(r.get("latitude")),
+            longitude=fnum(r.get("longitude")),
+            floors=r.get("floors"),
+            has_elevator=bool(r.get("has_elevator", False)),
+            has_ramp=bool(r.get("has_ramp", False)),
+            category=r.get("category"),
+            image_url=r.get("image_url"),
+            twogis_id=r.get("twogis_id"),
+            data_source=str(r.get("data_source") or "manual"),
+        )
+
+
+@dataclass
+class Room:
+    id: str
+    building_id: str
+    name: str
+    floor: int | None
+    type: str | None
+    capacity: int | None
+    accessible: bool
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Room:
+        return cls(
+            id=r["id"],
+            building_id=r["building_id"],
+            name=r["name"],
+            floor=r.get("floor"),
+            type=r.get("type"),
+            capacity=r.get("capacity"),
+            accessible=bool(r.get("accessible", True)),
+        )
+
+
+@dataclass
+class CampusEvent:
+    id: str
+    title: str
+    description: str | None
+    location: str | None
+    building_id: str | None
+    start_date: str | None
+    end_date: str | None
+    category: str | None
+    organizer: str | None
+    is_registration_required: bool
+    registration_url: str | None
+    image_url: str | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> CampusEvent:
+        return cls(
+            id=r["id"],
+            title=r["title"],
+            description=r.get("description"),
+            location=r.get("location"),
+            building_id=r.get("building_id"),
+            start_date=r.get("start_date"),
+            end_date=r.get("end_date"),
+            category=r.get("category"),
+            organizer=r.get("organizer"),
+            is_registration_required=bool(r.get("is_registration_required", False)),
+            registration_url=r.get("registration_url"),
+            image_url=r.get("image_url"),
+        )
+
+
+@dataclass
+class EventRegistration:
+    id: str
+    event_id: str
+    user_id: str
+    registered_at: datetime | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> EventRegistration:
+        return cls(
+            id=r["id"],
+            event_id=r["event_id"],
+            user_id=r["user_id"],
+            registered_at=parse_dt(r.get("registered_at")),
+        )
+
+
+@dataclass
+class Discount:
+    id: str
+    vendor_name: str
+    vendor_logo: str | None
+    title: str
+    description: str | None
+    discount_percentage: int
+    category: str | None
+    valid_until: str | None
+    code: str | None
+    terms: str | None
+    is_verified: bool
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Discount:
+        return cls(
+            id=r["id"],
+            vendor_name=r["vendor_name"],
+            vendor_logo=r.get("vendor_logo"),
+            title=r["title"],
+            description=r.get("description"),
+            discount_percentage=int(r.get("discount_percentage") or 0),
+            category=r.get("category"),
+            valid_until=r.get("valid_until"),
+            code=r.get("code"),
+            terms=r.get("terms"),
+            is_verified=bool(r.get("is_verified", True)),
+        )
+
+
+@dataclass
+class Review:
+    id: str
+    user_id: str
+    target_id: str
+    target_type: str
+    target_name: str
+    rating: int
+    comment: str | None
+    sentiment: str | None
+    helpful: int
+    created_at: datetime | None
+    user: User | None = None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Review:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            target_id=r["target_id"],
+            target_type=r["target_type"],
+            target_name=r["target_name"],
+            rating=int(r["rating"]),
+            comment=r.get("comment"),
+            sentiment=r.get("sentiment"),
+            helpful=int(r.get("helpful") or 0),
+            created_at=parse_dt(r.get("created_at")),
+            user=None,
+        )
+
+
+@dataclass
+class Course:
+    id: str
+    user_id: str
+    code: str
+    name: str
+    credits: int | None
+    grade: str | None
+    grade_points: float | None
+    semester: str | None
+    instructor: str | None
+    schedule: list[dict[str, Any]] | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Course:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            code=r["code"],
+            name=r["name"],
+            credits=r.get("credits"),
+            grade=r.get("grade"),
+            grade_points=fnum(r.get("grade_points")),
+            semester=r.get("semester"),
+            instructor=r.get("instructor"),
+            schedule=r.get("schedule"),
+        )
+
+
+@dataclass
+class AcademicPlan:
+    id: str
+    user_id: str
+    total_credits_required: int | None
+    credits_completed: int | None
+    credits_in_progress: int | None
+    gpa: float | None
+    standing: str | None
+    expected_graduation: str | None
+    major: str | None
+    minor: str | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> AcademicPlan:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            total_credits_required=r.get("total_credits_required"),
+            credits_completed=r.get("credits_completed"),
+            credits_in_progress=r.get("credits_in_progress"),
+            gpa=fnum(r.get("gpa")),
+            standing=r.get("standing"),
+            expected_graduation=r.get("expected_graduation"),
+            major=r.get("major"),
+            minor=r.get("minor"),
+        )
+
+
+@dataclass
+class PlannerEvent:
+    id: str
+    user_id: str
+    title: str
+    description: str | None
+    date: str
+    start_time: str
+    end_time: str
+    type: str | None
+    location: str | None
+    building_id: str | None
+    color: str | None
+    is_recurring: bool
+    reminder_minutes: int | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> PlannerEvent:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            title=r["title"],
+            description=r.get("description"),
+            date=r["date"],
+            start_time=r["start_time"],
+            end_time=r["end_time"],
+            type=r.get("type"),
+            location=r.get("location"),
+            building_id=r.get("building_id"),
+            color=r.get("color"),
+            is_recurring=bool(r.get("is_recurring", False)),
+            reminder_minutes=r.get("reminder_minutes"),
+        )
+
+
+@dataclass
+class StudyRoom:
+    id: str
+    building_id: str
+    building_name: str | None
+    name: str
+    floor: int | None
+    capacity: int | None
+    amenities: list[Any] | None
+    is_available: bool
+    current_occupancy: int
+    noise_level: str | None
+    image_url: str | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> StudyRoom:
+        return cls(
+            id=r["id"],
+            building_id=r["building_id"],
+            building_name=r.get("building_name"),
+            name=r["name"],
+            floor=r.get("floor"),
+            capacity=r.get("capacity"),
+            amenities=r.get("amenities"),
+            is_available=bool(r.get("is_available", True)),
+            current_occupancy=int(r.get("current_occupancy") or 0),
+            noise_level=r.get("noise_level"),
+            image_url=r.get("image_url"),
+        )
+
+
+@dataclass
+class StudyRoomBooking:
+    id: str
+    room_id: str
+    user_id: str
+    date: str
+    start_time: str
+    end_time: str
+    status: str
+    created_at: datetime | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> StudyRoomBooking:
+        return cls(
+            id=r["id"],
+            room_id=r["room_id"],
+            user_id=r["user_id"],
+            date=r["date"],
+            start_time=r["start_time"],
+            end_time=r["end_time"],
+            status=r.get("status") or "confirmed",
+            created_at=parse_dt(r.get("created_at")),
+        )
+
+
+@dataclass
+class UserSettings:
+    id: str
+    user_id: str
+    notifications_settings: dict[str, Any] | None
+    accessibility_settings: dict[str, Any] | None
+    privacy_settings: dict[str, Any] | None
+    language: str | None
+    theme: str | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> UserSettings:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            notifications_settings=r.get("notifications_settings"),
+            accessibility_settings=r.get("accessibility_settings"),
+            privacy_settings=r.get("privacy_settings"),
+            language=r.get("language"),
+            theme=r.get("theme"),
+        )
+
+
+@dataclass
+class Notification:
+    id: str
+    user_id: str
+    title: str
+    message: str | None
+    type: str | None
+    date: datetime | None
+    read: bool
+    action: dict[str, Any] | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Notification:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            title=r["title"],
+            message=r.get("message"),
+            type=r.get("type"),
+            date=parse_dt(r.get("date")),
+            read=bool(r.get("read", False)),
+            action=r.get("action"),
+        )
+
+
+@dataclass
+class Route:
+    id: str
+    start_lat: float | None
+    start_lng: float | None
+    start_name: str | None
+    end_lat: float | None
+    end_lng: float | None
+    end_name: str | None
+    distance: int | None
+    duration: int | None
+    is_accessible: bool | None
+    crowd_level: str | None
+    waypoints: list[dict[str, Any]] | None
+    instructions: list[Any] | None
+    preference: str | None
+    created_at: datetime | None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> Route:
+        return cls(
+            id=r["id"],
+            start_lat=fnum(r.get("start_lat")),
+            start_lng=fnum(r.get("start_lng")),
+            start_name=r.get("start_name"),
+            end_lat=fnum(r.get("end_lat")),
+            end_lng=fnum(r.get("end_lng")),
+            end_name=r.get("end_name"),
+            distance=r.get("distance"),
+            duration=r.get("duration"),
+            is_accessible=r.get("is_accessible"),
+            crowd_level=r.get("crowd_level"),
+            waypoints=r.get("waypoints"),
+            instructions=r.get("instructions"),
+            preference=r.get("preference"),
+            created_at=parse_dt(r.get("created_at")),
+        )
+
+
+@dataclass
+class SavedRoute:
+    id: str
+    user_id: str
+    route_id: str
+    saved_at: datetime | None
+    route: Route | None = None
+
+    @classmethod
+    def from_row(cls, r: dict[str, Any]) -> SavedRoute:
+        return cls(
+            id=r["id"],
+            user_id=r["user_id"],
+            route_id=r["route_id"],
+            saved_at=parse_dt(r.get("saved_at")),
+            route=None,
+        )
