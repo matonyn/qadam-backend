@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth as authlib
@@ -36,6 +37,31 @@ app.add_middleware(
 )
 
 
+def _ml_base_url() -> str:
+    return os.getenv("ML_API_URL", "").rstrip("/")
+
+
+async def _ml_request(method: str, path: str, *, json: Any | None = None) -> Any:
+    base = _ml_base_url()
+    if not base:
+        raise HTTPException(status_code=503, detail="ML service not configured (set ML_API_URL)")
+    url = f"{base}{path}"
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            resp = await client.request(method, url, json=json)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"ML service unreachable: {e.__class__.__name__}") from e
+    if resp.status_code >= 400:
+        detail = None
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text[:500]
+        raise HTTPException(status_code=502, detail={"ml_status": resp.status_code, "ml_body": detail})
+    return resp.json()
+
+
 def _user_to_schema(u: StoredUser) -> User:
     return User(
         id=u.id,
@@ -64,6 +90,12 @@ def require_user(authorization: Optional[str] = Header(default=None)) -> StoredU
 @app.get("/health", response_model=ApiResponse[SimpleOk])
 def health() -> ApiResponse[SimpleOk]:
     return ApiResponse(success=True, data=SimpleOk(ok=True))
+
+
+@app.get("/ml/health", response_model=ApiResponse[dict])
+async def ml_health() -> ApiResponse[dict]:
+    data = await _ml_request("GET", "/health")
+    return ApiResponse(success=True, data=data)
 
 
 @app.post("/auth/register", response_model=ApiResponse[AuthPayload])
@@ -195,4 +227,37 @@ def calculate_route(body: RoutingRequest, user: StoredUser = Depends(require_use
             "steps": [],
         },
     )
+
+
+# ── ML proxy endpoints (powered by vendor/senior_project_ML) ───────────────────
+
+
+@app.post("/ml/sentiment/predict", response_model=ApiResponse[dict])
+async def ml_sentiment_predict(payload: dict, user: StoredUser = Depends(require_user)) -> ApiResponse[dict]:
+    """
+    Proxies to ML service: POST /sentiment/predict
+    Expected payload: {"text": "..."}
+    """
+    data = await _ml_request("POST", "/sentiment/predict", json=payload)
+    return ApiResponse(success=True, data=data)
+
+
+@app.post("/ml/recommend", response_model=ApiResponse[dict])
+async def ml_recommend(payload: dict, user: StoredUser = Depends(require_user)) -> ApiResponse[dict]:
+    """
+    Proxies to ML service: POST /recommend
+    Expected payload: {"user_id": "...", "type": "all", "n": 5, "context": {...}}
+    """
+    data = await _ml_request("POST", "/recommend", json=payload)
+    return ApiResponse(success=True, data=data)
+
+
+@app.post("/ml/crowd/predict", response_model=ApiResponse[dict])
+async def ml_crowd_predict(payload: dict, user: StoredUser = Depends(require_user)) -> ApiResponse[dict]:
+    """
+    Proxies to ML service: POST /crowd/predict
+    Expected payload: {"horizon_minutes": 0, "event_flags": {...}}
+    """
+    data = await _ml_request("POST", "/crowd/predict", json=payload)
+    return ApiResponse(success=True, data=data)
 

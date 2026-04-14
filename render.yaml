@@ -15,3 +15,18 @@ services:
         generateValue: true
       - key: CORS_ALLOW_ORIGINS
         value: "*"
+      - key: ML_API_URL
+        value: "http://qadam-ml:8000"
+
+  - type: web
+    name: qadam-ml
+    runtime: python
+    rootDir: vendor/senior_project_ML
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
